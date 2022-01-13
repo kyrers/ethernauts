@@ -18,7 +18,7 @@ The following hardhat tasks will help you to:
 - Open the sale: `npx hardhat sale-state`
 - Mint sample tokens: `npx hardhat mint`
 
-## DAPP/Kepers development
+## DAPP/Keeper development
 
 We use Docker and Docker Compose to run the development environment.
 
@@ -26,7 +26,6 @@ Run `docker compose up -d` to start the whole project. It includes the following
 
 - `hardhat-node`: (http://localhost:4585)
 - `hardhat-deploy`: Takes care of deploying the Ethernauts.sol contract to the docker hardhat network for development
-- `ipfs` (http://localhost:5001)
 - `dapp` (Next.js) (http://localhost:3000)
 - `redis` (https://localhost:6379)
 - `keeper-queue`: Node server that listens to mint & batch events and enqueues the necessary jobs to be processed.
@@ -55,4 +54,10 @@ Then, you will be able to mint any amount of tokens using the `mint` task:
 
 ```bash
 docker compose exec hardhat-node sh -c 'cd /src/packages/hardhat && npx hardhat --network docker mint'
+```
+
+Finally, you can also set the base URL changer address, with:
+
+```bash
+docker compose exec hardhat-node sh -c 'cd /src/packages/hardhat && npx hardhat --network docker exec --method setUrlChanger --args ["0x000"]'
 ```
