@@ -7,8 +7,9 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-contract Ethernauts is ERC721Enumerable, Ownable {
+contract Ethernauts is ERC721Enumerable, Ownable, ReentrancyGuard {
     using Address for address payable;
     using Strings for uint256;
 
@@ -36,20 +37,15 @@ contract Ethernauts is ERC721Enumerable, Ownable {
 
     // Can be changed by owner until minting stopped
     string public baseTokenURI;
-
     uint256 public mintPrice;
-
     uint256 public earlyMintPrice;
-
     address public couponSigner;
-
     address public urlChanger;
 
     // Internal usage
     uint256 private _tokensGifted;
     mapping(address => bool) private _redeemedCoupons; // user address => if its single coupon has been redeemed
     uint256[] private _randomNumbers;
-
     bool public permanentUrl;
 
     // Three different sale stages:
@@ -76,7 +72,8 @@ contract Ethernauts is ERC721Enumerable, Ownable {
         uint256 definitiveBatchSize,
         uint256 initialMintPrice,
         uint256 initialEarlyMintPrice,
-        address initialCouponSigner
+        address initialCouponSigner,
+        address initialUrlChanger
     ) ERC721("Ethernauts", "NAUTS") {
         if (definitiveMaxGiftable > 100) {
             revert MaxGiftableError({gifted: definitiveMaxGiftable, maxGift: 100});
@@ -93,6 +90,7 @@ contract Ethernauts is ERC721Enumerable, Ownable {
         mintPrice = initialMintPrice;
         earlyMintPrice = initialEarlyMintPrice;
         couponSigner = initialCouponSigner;
+        urlChanger = initialUrlChanger;
 
         currentSaleState = SaleState.Paused;
     }
@@ -105,6 +103,7 @@ contract Ethernauts is ERC721Enumerable, Ownable {
         if (currentSaleState != definedSaleState) {
             revert StateMismatchError({current: currentSaleState, defined: definedSaleState});
         }
+
         _;
     }
 
@@ -113,7 +112,7 @@ contract Ethernauts is ERC721Enumerable, Ownable {
     // --------------------
 
     /// @notice Mints a single token if at least mintPrice is sent and there are tokens available to mint.
-    function mint() external payable onlyOnState(SaleState.Open) {
+    function mint() external payable nonReentrant onlyOnState(SaleState.Open) {
         if (msg.value < mintPrice) {
             revert MintPriceError({sent: msg.value, required: mintPrice});
         }
@@ -122,16 +121,16 @@ contract Ethernauts is ERC721Enumerable, Ownable {
             revert InsufficientToMint({available: availableToMint()});
         }
 
-        _mintNext(msg.sender);
-
-        if (availableToMint() == 0) {
+        if (availableToMint() - 1 == 0) {
             currentSaleState = SaleState.PublicCompleted;
         }
+
+        _mintNext(msg.sender);
     }
 
     /// @notice Allows the sender to mint while in early sale state.
     /// @param signedCoupon Coupon given by couponSigner giving the sender early mint access.
-    function mintEarly(bytes memory signedCoupon) external payable onlyOnState(SaleState.Early) {
+    function mintEarly(bytes memory signedCoupon) external payable nonReentrant onlyOnState(SaleState.Early) {
         if (msg.value < earlyMintPrice) {
             revert EarlyMintPriceError({sent: msg.value, required: earlyMintPrice});
         }
@@ -148,9 +147,9 @@ contract Ethernauts is ERC721Enumerable, Ownable {
             revert InvalidUserCouponError({userCoupon: isCouponSignedForUser(msg.sender, signedCoupon)});
         }
 
-        _mintNext(msg.sender);
-
         _redeemedCoupons[msg.sender] = true;
+
+        _mintNext(msg.sender);
     }
 
     /// @notice The number of tokens gifted.
@@ -264,9 +263,9 @@ contract Ethernauts is ERC721Enumerable, Ownable {
             revert TokensGiftError({gifted: _tokensGifted, maxToGift: maxGiftable});
         }
 
-        _mintNext(to);
-
         _tokensGifted += 1;
+
+        _mintNext(to);
     }
 
     /// @notice Sets the new mint price for a token.
@@ -282,6 +281,7 @@ contract Ethernauts is ERC721Enumerable, Ownable {
     /// @param newEarlyMintPrice The new early price a token can be bought for.
     function setEarlyMintPrice(uint256 newEarlyMintPrice) external onlyOwner {
         earlyMintPrice = newEarlyMintPrice;
+
         emit EarlyMintPriceChanged(newEarlyMintPrice);
     }
 
@@ -289,12 +289,16 @@ contract Ethernauts is ERC721Enumerable, Ownable {
     /// @dev This can only be called by the contract owner. Can only be called if NFTs arent done minting.
     /// @param newBaseTokenURI The new base URI for tokens.
     function setBaseURI(string calldata newBaseTokenURI) external {
-        if (msg.sender != owner() && msg.sender != urlChanger) revert NotAuthorized(msg.sender);
+        if (msg.sender != owner() && msg.sender != urlChanger) {
+            revert NotAuthorized(msg.sender);
+        }
+
         if (permanentUrl) {
             revert PermanentUrlError({permanentURI: permanentUrl});
         }
 
         baseTokenURI = newBaseTokenURI;
+
         emit BaseTokenURIChanged(newBaseTokenURI);
     }
 
@@ -315,6 +319,7 @@ contract Ethernauts is ERC721Enumerable, Ownable {
         }
 
         currentSaleState = newSaleState;
+
         emit SaleStateChanged(newSaleState);
     }
 
@@ -323,6 +328,7 @@ contract Ethernauts is ERC721Enumerable, Ownable {
     /// @param newCouponSigner New address that can issue coupons.
     function setCouponSigner(address newCouponSigner) external onlyOwner {
         couponSigner = newCouponSigner;
+
         emit CouponSignerChanged(newCouponSigner);
     }
 
@@ -330,6 +336,7 @@ contract Ethernauts is ERC721Enumerable, Ownable {
     /// @dev This can only be called by the contract owner.
     function setPermanentURI() external onlyOwner {
         permanentUrl = true;
+
         emit PermanentURITriggered(true);
     }
 
@@ -338,6 +345,7 @@ contract Ethernauts is ERC721Enumerable, Ownable {
     /// @param newUrlChanger New address that can change the URI
     function setUrlChanger(address newUrlChanger) external onlyOwner {
         urlChanger = newUrlChanger;
+
         emit UrlChangerChanged(newUrlChanger);
     }
 
@@ -346,6 +354,7 @@ contract Ethernauts is ERC721Enumerable, Ownable {
     /// @param beneficiary The address that funds will be withdrawn to.
     function withdraw(address payable beneficiary) external onlyOwner {
         beneficiary.sendValue(address(this).balance);
+
         emit WithdrawTriggered(beneficiary);
     }
 
@@ -381,29 +390,28 @@ contract Ethernauts is ERC721Enumerable, Ownable {
     function _mintNext(address to) private {
         uint256 tokenId = totalSupply();
 
-        _mint(to, tokenId);
-
         uint256 currentBatchId = tokenId / batchSize;
         uint256 maxTokenIdInBatch = batchSize * (currentBatchId + 1) - 1;
 
         if (tokenId == maxTokenIdInBatch) {
             _generateRandomNumber();
         }
+
+        _safeMint(to, tokenId);
     }
 
-    function _mint(address to, uint256 tokenId) internal virtual override {
+    function _safeMint(address to, uint256 tokenId) internal virtual override {
         if (totalSupply() >= maxTokens) {
             revert TotalSupplyError({total: totalSupply(), max: maxTokens});
         }
-        super._mint(to, tokenId);
+
+        super._safeMint(to, tokenId);
     }
 
     function _generateRandomNumber() private {
-        // solhint-disable not-rely-on-time
         uint256 randomNumber = uint256(
             keccak256(abi.encodePacked(msg.sender, block.difficulty, block.timestamp, _randomNumbers.length))
         );
-        // solhint-enable not-rely-on-time
 
         _randomNumbers.push(randomNumber);
     }
